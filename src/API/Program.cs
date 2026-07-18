@@ -1,11 +1,14 @@
 using API;
 using Application.Common.Behaviors;
 using Application.Common.Interfaces;
+using Application.GroupJoinProcessManagers;
+using Application.GroupJoinRequests;
 using FluentValidation;
 using Infrastructure.Identity;
 using Infrastructure.Outbox;
 using Infrastructure.Persistence;
 using Infrastructure.Persistence.EF;
+using Infrastructure.QueryServices;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,7 +18,6 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
 
-// Interceptors that need ICurrentUser are resolved lazily from the DI scope.
 builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     options
         .UseNpgsql(connectionString)
@@ -25,15 +27,15 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
             sp.GetRequiredService<AuditInterceptor>(),
             new DomainEventDispatcherInterceptor()));
 
-// Register interceptors so EF Core can resolve them through the DI scope.
 builder.Services.AddScoped<SoftDeleteInterceptor>();
 builder.Services.AddScoped<AuditInterceptor>();
-
-// IApplicationDbContext → AppDbContext (Infrastructure)
 builder.Services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
+// ── Query services (Infrastructure implementations) ───────────────
+builder.Services.AddScoped<IGroupJoinRequestQueryService,        GroupJoinRequestQueryService>();
+builder.Services.AddScoped<IGroupJoinProcessManagerQueryService, GroupJoinProcessManagerQueryService>();
+
 // ── MediatR pipeline ──────────────────────────────────────────────
-// Order matters: Auth → Validation → DomainException → Handler
 builder.Services.AddMediatR(cfg =>
 {
     cfg.RegisterServicesFromAssembly(typeof(Application.Common.Behaviors.AuthorizationBehavior<,>).Assembly);
@@ -49,16 +51,23 @@ builder.Services.AddValidatorsFromAssembly(typeof(Application.Common.Behaviors.A
 // ── Controllers + Zero-attribute auth convention ──────────────────
 builder.Services
     .AddControllers(o => o.Conventions.Add(new AuthorizeByRequestConvention()))
-    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(
+        new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
 // ── Auth ──────────────────────────────────────────────────────────
-builder.Services
-    .AddAuthentication("Bearer")
-    .AddJwtBearer("Bearer", o =>
+// JWT is optional for local demo — omit Auth:Authority in config to skip validation.
+var jwtAuthority = builder.Configuration["Auth:Authority"];
+
+var authBuilder = builder.Services.AddAuthentication("Bearer");
+if (!string.IsNullOrWhiteSpace(jwtAuthority))
+{
+    authBuilder.AddJwtBearer("Bearer", o =>
     {
-        o.Authority = builder.Configuration["Auth:Authority"];
+        o.Authority = jwtAuthority;
         o.Audience  = builder.Configuration["Auth:Audience"];
     });
+}
+
 builder.Services.AddAuthorization();
 
 // ── Swagger ───────────────────────────────────────────────────────
@@ -75,6 +84,14 @@ builder.Services.AddHostedService<OutboxProcessor>();
 
 // ─────────────────────────────────────────────────────────────────
 var app = builder.Build();
+
+// Apply any pending EF Core migrations on startup.
+// Safe to call repeatedly — a no-op when the schema is up to date.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+}
 
 if (app.Environment.IsDevelopment())
 {
