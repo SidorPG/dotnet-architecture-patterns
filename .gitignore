@@ -1,0 +1,22 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+*.DotSettings.user
+
+## Test results
+TestResults/
+coverage/
+
+## Environment
+.env
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+## OS
+.DS_Store
+Thumbs.db
