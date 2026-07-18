@@ -405,12 +405,62 @@ OnPaymentCompleted (Outbox → MediatR)
 
 ---
 
+## Running locally
+
+```bash
+# Full stack (PostgreSQL + API + frontend)
+docker compose up
+
+# API only (port 5000)
+dotnet run --project src/API
+
+# Frontend dev server (port 5173, proxies /api to :5000)
+cd frontend && npm install && npm run dev
+```
+
+After changing a C# DTO or adding an endpoint, regenerate the TypeScript types:
+
+```bash
+cd frontend
+npm run openapi:generate   # reads openapi.json → overwrites src/api/schemas.ts
+```
+
+---
+
+## Frontend type-safety flow
+
+```
+C# record (GroupJoinRequestDto)
+  │  Swagger / Swashbuckle
+  ▼
+openapi.json  ←  committed snapshot, updated when API contract changes
+  │  npm run openapi:generate  (openapi-typescript)
+  ▼
+src/api/schemas.ts  ←  READ ONLY — never edit by hand
+  │  import type { components }
+  ▼
+groupJoinRequestsService.ts  →  groupJoinRequestsStore.ts  →  GroupJoinRequestCard.vue
+```
+
+If a C# property is renamed, `openapi:generate` updates `schemas.ts`, and every
+TypeScript call-site that used the old name becomes a **compile error** — no
+runtime surprises.
+
+> **Files:**
+> [`frontend/src/api/schemas.ts`](frontend/src/api/schemas.ts)
+> · [`frontend/src/services/groupJoinRequestsService.ts`](frontend/src/services/groupJoinRequestsService.ts)
+> · [`frontend/src/stores/groupJoinRequestsStore.ts`](frontend/src/stores/groupJoinRequestsStore.ts)
+> · [`frontend/src/components/GroupJoinRequestCard.vue`](frontend/src/components/GroupJoinRequestCard.vue)
+
+---
+
 ## Stack
 
-| Layer          | Technology                                     |
-| -------------- | ---------------------------------------------- |
-| API            | ASP.NET Core 8                                 |
-| Application    | MediatR 12, FluentValidation 11                |
-| Domain         | Plain C#, StronglyTypedId                      |
-| Infrastructure | EF Core 8, PostgreSQL, Newtonsoft.Json         |
-| Frontend       | Vue 3, Pinia, FullCalendar, openapi-typescript |
+| Layer          | Technology                                            |
+| -------------- | ----------------------------------------------------- |
+| API            | ASP.NET Core 8                                        |
+| Application    | MediatR 12, FluentValidation 11                       |
+| Domain         | Plain C#, strongly-typed IDs (readonly record struct) |
+| Infrastructure | EF Core 8, PostgreSQL, Newtonsoft.Json                |
+| Frontend       | Vue 3, TypeScript, Pinia, openapi-typescript          |
+| DevOps         | Docker Compose (postgres + api + frontend)            |

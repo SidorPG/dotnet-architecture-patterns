@@ -8,8 +8,9 @@ public class Result
         Error = error;
     }
 
-    public bool IsSuccess { get; }
-    public string Error { get; }
+    public bool   IsSuccess  { get; }
+    public string Error      { get; }
+    public bool   IsNotFound => !IsSuccess && Error == "Not Found";
 
     public static Result Success()             => new(true,  string.Empty);
     public static Result Failure(string error) => new(false, error);

@@ -1,0 +1,107 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "ArchitecturePatterns.API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/group-join-requests/{id}": {
+      "get": {
+        "tags": ["GroupJoinRequests"],
+        "summary": "Gets a single join request by ID.",
+        "operationId": "GetGroupJoinRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request found.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GroupJoinRequestDto" }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated." },
+          "404": { "description": "Request not found." }
+        }
+      }
+    },
+    "/api/v1/group-join-requests/{id}/accept": {
+      "post": {
+        "tags": ["GroupJoinRequests"],
+        "summary": "Accepts a pending join request. Instructor permission required.",
+        "operationId": "AcceptGroupJoinRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AcceptBody" }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Accepted successfully." },
+          "400": {
+            "description": "Validation error or domain guard violation."
+          },
+          "401": { "description": "Not authenticated." },
+          "403": { "description": "Missing instructor permission." },
+          "404": { "description": "Request not found." }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "GroupJoinRequestDto": {
+        "type": "object",
+        "required": ["id", "studentId", "groupId", "status", "requestedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "studentId": { "type": "string", "format": "uuid" },
+          "groupId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/JoinRequestStatus" },
+          "requestedAt": { "type": "string", "format": "date-time" },
+          "agreedPrice": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "agreedCurrency": { "type": "string", "nullable": true }
+        }
+      },
+      "JoinRequestStatus": {
+        "type": "string",
+        "enum": [
+          "PendingApproval",
+          "PendingPayment",
+          "Confirmed",
+          "Rejected",
+          "Cancelled"
+        ]
+      },
+      "AcceptBody": {
+        "type": "object",
+        "required": ["agreedPrice", "agreedCurrency"],
+        "properties": {
+          "agreedPrice": { "type": "number", "format": "double" },
+          "agreedCurrency": { "type": "string" }
+        }
+      }
+    }
+  }
+}
