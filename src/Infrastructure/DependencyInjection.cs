@@ -19,9 +19,11 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // ── Interceptors ──────────────────────────────────────────────
-        services.AddScoped<SoftDeleteInterceptor>();
-        services.AddScoped<AuditInterceptor>();
+        // ── Interceptors (order matters: each calls base, forming a chain) ──
+        services.AddScoped<SoftDeleteInterceptor>();           // 1. mark IsDeleted
+        services.AddScoped<AuditInterceptor>();                // 2. stamp CreatedAt/UpdatedAt
+        services.AddScoped<DateTimeInterceptor>();             // 3. normalise Kind=Unspecified → UTC
+        // DomainEventDispatcherInterceptor has no deps — instantiated inline (4. enqueue events)
 
         // ── Database ──────────────────────────────────────────────────
         services.AddDbContext<AppDbContext>((sp, options) =>
@@ -36,6 +38,7 @@ public static class DependencyInjection
                 .AddInterceptors(
                     sp.GetRequiredService<SoftDeleteInterceptor>(),
                     sp.GetRequiredService<AuditInterceptor>(),
+                    sp.GetRequiredService<DateTimeInterceptor>(),
                     new DomainEventDispatcherInterceptor());
         });
 
