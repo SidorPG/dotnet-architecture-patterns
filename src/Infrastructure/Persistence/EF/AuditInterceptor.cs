@@ -44,15 +44,16 @@ public class AuditInterceptor : SaveChangesInterceptor
         foreach (var entry in context.ChangeTracker.Entries())
         {
             if (entry.State is EntityState.Unchanged or EntityState.Detached) continue;
+            if (entry.Entity is not AuditableEntity entity) continue;
 
-            if (entry.State == EntityState.Added && entry.Entity is IAuditableEntity added)
-                added.MarkCreated(now);
+            if (entry.State == EntityState.Added)
+                entity.MarkCreated(now);
 
-            if (entry.State == EntityState.Modified && entry.Entity is IAuditableEntity updated)
+            if (entry.State == EntityState.Modified)
             {
-                // SoftDeleteInterceptor already calls MarkDeleted (which sets UpdatedAt).
-                if (entry.Entity is ISoftDelete { IsDeleted: true }) continue;
-                updated.MarkUpdated(now);
+                // SoftDeleteInterceptor already called MarkDeleted (which sets UpdatedAt).
+                if (entity.IsDeleted) continue;
+                entity.MarkUpdated(now);
             }
         }
     }

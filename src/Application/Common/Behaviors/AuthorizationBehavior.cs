@@ -1,4 +1,5 @@
 using Application.Common.Authorization;
+using Application.Common.Interfaces;
 using MediatR;
 
 namespace Application.Common.Behaviors;
@@ -45,18 +46,6 @@ public sealed class AuthorizationBehavior<TRequest, TResponse>
 
         return await next();
     }
-}
-
-// Interfaces fulfilled by Infrastructure — shown here for context.
-public interface ICurrentUser
-{
-    bool     IsAuthenticated { get; }
-    Guid?    UserId          { get; }
-}
-
-public interface IPermissionService
-{
-    Task<bool> HasPermissionAsync(Guid userId, string permission, CancellationToken ct);
 }
 
 public class ForbiddenException : Exception;

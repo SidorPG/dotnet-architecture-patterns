@@ -1,6 +1,10 @@
+using API;
 using Application.Common.Behaviors;
+using Application.Common.Interfaces;
 using FluentValidation;
+using Infrastructure.Identity;
 using Infrastructure.Outbox;
+using Infrastructure.Persistence;
 using Infrastructure.Persistence.EF;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -11,20 +15,28 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+// Interceptors that need ICurrentUser are resolved lazily from the DI scope.
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     options
         .UseNpgsql(connectionString)
         .UseSnakeCaseNamingConvention()
         .AddInterceptors(
-            new SoftDeleteInterceptor(/* ICurrentUser resolved by EF's DI */),
-            new AuditInterceptor(/* ICurrentUser */),
+            sp.GetRequiredService<SoftDeleteInterceptor>(),
+            sp.GetRequiredService<AuditInterceptor>(),
             new DomainEventDispatcherInterceptor()));
+
+// Register interceptors so EF Core can resolve them through the DI scope.
+builder.Services.AddScoped<SoftDeleteInterceptor>();
+builder.Services.AddScoped<AuditInterceptor>();
+
+// IApplicationDbContext → AppDbContext (Infrastructure)
+builder.Services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
 // ── MediatR pipeline ──────────────────────────────────────────────
 // Order matters: Auth → Validation → DomainException → Handler
 builder.Services.AddMediatR(cfg =>
 {
-    cfg.RegisterServicesFromAssembly(typeof(Application.AssemblyReference).Assembly);
+    cfg.RegisterServicesFromAssembly(typeof(Application.Common.Behaviors.AuthorizationBehavior<,>).Assembly);
 
     cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(AuthorizationBehavior<,>));
     cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
@@ -32,7 +44,7 @@ builder.Services.AddMediatR(cfg =>
 });
 
 // ── Validation ────────────────────────────────────────────────────
-builder.Services.AddValidatorsFromAssembly(typeof(Application.AssemblyReference).Assembly);
+builder.Services.AddValidatorsFromAssembly(typeof(Application.Common.Behaviors.AuthorizationBehavior<,>).Assembly);
 
 // ── Controllers + Zero-attribute auth convention ──────────────────
 builder.Services
@@ -55,8 +67,8 @@ builder.Services.AddSwaggerGen();
 
 // ── Infrastructure services ───────────────────────────────────────
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<Application.Common.Interfaces.ICurrentUser, Infrastructure.Identity.CurrentUser>();
-builder.Services.AddScoped<Application.Common.Interfaces.IPermissionService, Infrastructure.Identity.PermissionService>();
+builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+builder.Services.AddScoped<IPermissionService, PermissionService>();
 
 // ── Outbox background processor ───────────────────────────────────
 builder.Services.AddHostedService<OutboxProcessor>();
@@ -75,9 +87,3 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-
-// Marker type for assembly scanning
-namespace Application
-{
-    public sealed class AssemblyReference;
-}

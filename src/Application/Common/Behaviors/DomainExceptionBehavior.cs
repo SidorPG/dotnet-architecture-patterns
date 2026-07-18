@@ -47,5 +47,3 @@ public sealed class DomainExceptionBehavior<TRequest, TResponse>
     }
 }
 
-// Domain guard: thrown by aggregates for invariant violations, not for "not found" cases.
-public class DomainException(string message) : Exception(message);

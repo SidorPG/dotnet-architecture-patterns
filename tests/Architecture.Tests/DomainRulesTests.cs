@@ -1,6 +1,7 @@
 using Domain.Abstractions;
 using NetArchTest.Rules;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Xunit;
 
 namespace Architecture.Tests;
@@ -52,12 +53,19 @@ public class DomainRulesTests
             .Where(t => !t.IsAbstract)
             .Where(t =>
             {
-                // Records have a compiler-generated EqualityContract property.
-                // Also check no writable public properties.
-                var writableProps = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanWrite && p.GetSetMethod()?.IsPublic == true)
+                // Records use init-only setters — those are immutable and must not be flagged.
+                // A property is truly mutable only when its setter is NOT init-only.
+                var mutableProps = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p =>
+                    {
+                        var setter = p.GetSetMethod();
+                        if (setter is null || !setter.IsPublic) return false;
+                        // init-only setters carry IsExternalInit as a required modifier.
+                        var mods = setter.ReturnParameter.GetRequiredCustomModifiers();
+                        return !mods.Contains(typeof(IsExternalInit));
+                    })
                     .ToList();
-                return writableProps.Count > 0;
+                return mutableProps.Count > 0;
             })
             .Select(t => t.FullName)
             .ToList();

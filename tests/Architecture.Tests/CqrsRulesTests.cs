@@ -74,7 +74,8 @@ public class CqrsRulesTests
 
         var violators = queryHandlerNamespaces
             .Where(t => t.GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
-                .Any(f => f.FieldType.Name.Contains("DbContext")))
+                // Only flag concrete DbContext subclasses — IApplicationDbContext is fine.
+                .Any(f => f.FieldType.Name.Contains("DbContext") && !f.FieldType.IsInterface))
             .Select(t => t.FullName)
             .ToList();
 

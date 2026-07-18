@@ -9,7 +9,6 @@
   <!-- Domain -->
   <ItemGroup>
     <PackageVersion Include="MediatR.Contracts"    Version="2.0.1" />
-    <PackageVersion Include="StronglyTypedId"      Version="1.0.0-beta09" />
   </ItemGroup>
 
   <!-- Application -->
