@@ -24,17 +24,20 @@ public static class DependencyInjection
         services.AddScoped<AuditInterceptor>();
 
         // ── Database ──────────────────────────────────────────────────
-        var connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
-
         services.AddDbContext<AppDbContext>((sp, options) =>
+        {
+            var connectionString = sp.GetRequiredService<IConfiguration>()
+                .GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+
             options
                 .UseNpgsql(connectionString)
                 .UseSnakeCaseNamingConvention()
                 .AddInterceptors(
                     sp.GetRequiredService<SoftDeleteInterceptor>(),
                     sp.GetRequiredService<AuditInterceptor>(),
-                    new DomainEventDispatcherInterceptor()));
+                    new DomainEventDispatcherInterceptor());
+        });
 
         services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
