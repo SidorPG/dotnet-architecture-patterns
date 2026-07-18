@@ -76,7 +76,12 @@ builder.Services.AddSwaggerGen();
 
 // ── Infrastructure services ───────────────────────────────────────
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+// When no JWT authority is configured (local demo), every request is treated as
+// authenticated so the pipeline runs end-to-end without OIDC infrastructure.
+if (string.IsNullOrWhiteSpace(jwtAuthority))
+    builder.Services.AddScoped<ICurrentUser, Infrastructure.Identity.AnonymousCurrentUser>();
+else
+    builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 
 // ── Outbox background processor ───────────────────────────────────
@@ -98,6 +103,23 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Map domain-level exceptions thrown by pipeline behaviors to correct HTTP status codes.
+app.UseExceptionHandler(errorApp => errorApp.Run(async ctx =>
+{
+    var ex = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+    ctx.Response.StatusCode = ex switch
+    {
+        UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
+        Application.Common.Behaviors.ForbiddenException => StatusCodes.Status403Forbidden,
+        _ => StatusCodes.Status500InternalServerError,
+    };
+    if (ctx.Response.StatusCode == 500 && ex is not null)
+    {
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsJsonAsync(new { error = ex.Message });
+    }
+}));
 
 app.UseAuthentication();
 app.UseAuthorization();
