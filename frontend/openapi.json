@@ -5,6 +5,54 @@
     "version": "v1"
   },
   "paths": {
+    "/api/v1/group-join-requests": {
+      "get": {
+        "tags": ["GroupJoinRequests"],
+        "summary": "Returns all pending-approval join requests.",
+        "operationId": "GetPendingGroupJoinRequests",
+        "responses": {
+          "200": {
+            "description": "List of pending requests (may be empty).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupJoinRequestDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated." }
+        }
+      },
+      "post": {
+        "tags": ["GroupJoinRequests"],
+        "summary": "Submits a new group join request.",
+        "operationId": "SubmitGroupJoinRequest",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitBody" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created — returns the new request ID.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SubmitResult" }
+              }
+            }
+          },
+          "400": { "description": "Validation error." },
+          "401": { "description": "Not authenticated." }
+        }
+      }
+    },
     "/api/v1/group-join-requests/{id}": {
       "get": {
         "tags": ["GroupJoinRequests"],
@@ -93,6 +141,21 @@
           "Rejected",
           "Cancelled"
         ]
+      },
+      "SubmitBody": {
+        "type": "object",
+        "required": ["studentId", "groupId"],
+        "properties": {
+          "studentId": { "type": "string", "format": "uuid" },
+          "groupId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "SubmitResult": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }
+        }
       },
       "AcceptBody": {
         "type": "object",

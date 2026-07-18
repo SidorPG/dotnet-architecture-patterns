@@ -4,6 +4,24 @@
  */
 
 export interface paths {
+    "/api/v1/group-join-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Returns all pending-approval join requests. */
+        get: operations["GetPendingGroupJoinRequests"];
+        put?: never;
+        /** Submits a new group join request. */
+        post: operations["SubmitGroupJoinRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/group-join-requests/{id}": {
         parameters: {
             query?: never;
@@ -58,6 +76,16 @@ export interface components {
         };
         /** @enum {string} */
         JoinRequestStatus: "PendingApproval" | "PendingPayment" | "Confirmed" | "Rejected" | "Cancelled";
+        SubmitBody: {
+            /** Format: uuid */
+            studentId: string;
+            /** Format: uuid */
+            groupId: string;
+        };
+        SubmitResult: {
+            /** Format: uuid */
+            id: string;
+        };
         AcceptBody: {
             /** Format: double */
             agreedPrice: number;
@@ -72,6 +100,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    GetPendingGroupJoinRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of pending requests (may be empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupJoinRequestDto"][];
+                };
+            };
+            /** @description Not authenticated. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    SubmitGroupJoinRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitBody"];
+            };
+        };
+        responses: {
+            /** @description Created — returns the new request ID. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitResult"];
+                };
+            };
+            /** @description Validation error. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     GetGroupJoinRequest: {
         parameters: {
             query?: never;

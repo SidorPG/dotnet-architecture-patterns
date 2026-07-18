@@ -1,83 +1,70 @@
 <template>
   <div class="card">
-    <div v-if="store.loading" class="card__state">Loading…</div>
+    <header class="card__header">
+      <span class="card__status" :class="`card__status--${statusClass}`">
+        {{ request.status }}
+      </span>
+      <span class="card__id">{{ request.id }}</span>
+    </header>
 
-    <div v-else-if="store.error" class="card__state card__state--error">
-      {{ store.error }}
-    </div>
+    <dl class="card__body">
+      <dt>Student</dt>
+      <dd>{{ request.studentId }}</dd>
+      <dt>Group</dt>
+      <dd>{{ request.groupId }}</dd>
+      <dt>Requested</dt>
+      <dd>{{ formatDate(request.requestedAt) }}</dd>
+      <template v-if="request.agreedPrice != null">
+        <dt>Agreed price</dt>
+        <dd>{{ request.agreedPrice }} {{ request.agreedCurrency }}</dd>
+      </template>
+    </dl>
 
-    <template v-else-if="store.current">
-      <header class="card__header">
-        <span class="card__status" :class="`card__status--${statusClass}`">
-          {{ store.current.status }}
-        </span>
-        <span class="card__id">{{ store.current.id }}</span>
-      </header>
-
-      <dl class="card__body">
-        <dt>Student</dt>
-        <dd>{{ store.current.studentId }}</dd>
-        <dt>Group</dt>
-        <dd>{{ store.current.groupId }}</dd>
-        <dt>Requested</dt>
-        <dd>{{ formatDate(store.current.requestedAt) }}</dd>
-        <template v-if="store.current.agreedPrice != null">
-          <dt>Agreed price</dt>
-          <dd>
-            {{ store.current.agreedPrice }} {{ store.current.agreedCurrency }}
-          </dd>
-        </template>
-      </dl>
-
-      <form
-        v-if="store.current.status === 'PendingApproval'"
-        class="card__accept"
-        @submit.prevent="handleAccept"
-      >
-        <input
-          v-model.number="form.agreedPrice"
-          type="number"
-          step="0.01"
-          min="0"
-          placeholder="Price"
-          required
-        />
-        <input
-          v-model="form.agreedCurrency"
-          type="text"
-          maxlength="3"
-          placeholder="EUR"
-          required
-        />
-        <button type="submit" :disabled="store.loading">Accept</button>
-      </form>
-    </template>
-
-    <div v-else class="card__state">No request loaded.</div>
+    <form
+      v-if="request.status === 'PendingApproval'"
+      class="card__accept"
+      @submit.prevent="handleAccept"
+    >
+      <input
+        v-model.number="form.agreedPrice"
+        type="number"
+        step="0.01"
+        min="0"
+        placeholder="Price"
+        required
+      />
+      <input
+        v-model="form.agreedCurrency"
+        type="text"
+        maxlength="3"
+        placeholder="EUR"
+        required
+      />
+      <button type="submit">Accept</button>
+    </form>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, computed, onMounted } from "vue";
-import { useGroupJoinRequestsStore } from "@/stores/groupJoinRequestsStore";
-import type { JoinRequestStatus } from "@/services/groupJoinRequestsService";
+import { reactive, computed } from "vue";
+import type {
+  GroupJoinRequestDto,
+  JoinRequestStatus,
+  AcceptBody,
+} from "@/services/groupJoinRequestsService";
 
-const props = defineProps<{ requestId: string }>();
-
-const store = useGroupJoinRequestsStore();
+const props = defineProps<{ request: GroupJoinRequestDto }>();
+const emit = defineEmits<{ accept: [id: string, body: AcceptBody] }>();
 
 const form = reactive({ agreedPrice: 0, agreedCurrency: "EUR" });
 
-onMounted(() => store.load(props.requestId));
-
-async function handleAccept() {
-  await store.accept(props.requestId, {
+function handleAccept() {
+  emit("accept", props.request.id, {
     agreedPrice: form.agreedPrice,
     agreedCurrency: form.agreedCurrency,
   });
 }
 
-// Maps JoinRequestStatus → CSS modifier for the status badge.
 const statusClass = computed<string>(() => {
   const map: Record<JoinRequestStatus, string> = {
     PendingApproval: "pending",
@@ -86,7 +73,7 @@ const statusClass = computed<string>(() => {
     Rejected: "rejected",
     Cancelled: "cancelled",
   };
-  return store.current ? map[store.current.status] : "";
+  return map[props.request.status];
 });
 
 function formatDate(iso: string) {
@@ -99,14 +86,8 @@ function formatDate(iso: string) {
   border: 1px solid var(--color-border, #ddd);
   border-radius: 8px;
   padding: 1rem;
-  max-width: 480px;
   font-family: sans-serif;
-}
-.card__state {
-  color: #888;
-}
-.card__state--error {
-  color: #c0392b;
+  margin-bottom: 1rem;
 }
 
 .card__header {
@@ -178,9 +159,5 @@ function formatDate(iso: string) {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-}
-.card__accept button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>
