@@ -20,7 +20,7 @@ public class Handler : IRequestHandler<Command, Result>
             .FirstOrDefaultAsync(r => r.Id == request.RequestId, ct);
 
         if (joinRequest is null)
-            return Result.Failure("Join request not found");
+            return Result.NotFound();
 
         // State transition + domain event raised inside the aggregate.
         // DomainEventDispatcherInterceptor will write the event to the Outbox on SaveChanges.

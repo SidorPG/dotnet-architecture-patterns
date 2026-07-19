@@ -41,3 +41,6 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+
+// Exposes Program to the Integration.Tests project via WebApplicationFactory<Program>.
+public partial class Program { }
