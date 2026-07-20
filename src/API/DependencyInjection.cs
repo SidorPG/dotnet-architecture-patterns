@@ -58,7 +58,9 @@ public static class DependencyInjection
 
         if (!string.IsNullOrWhiteSpace(jwtAuthority))
         {
-            // Production: validate JWT signature, expiry, and audience via OIDC discovery.
+            // JwtAuthenticationHandler makes the validation pipeline explicit for demo purposes.
+            // In a typical project this entire block is just:
+            //   authBuilder.AddJwtBearer(o => { o.Authority = ...; o.Audience = ...; });
             authBuilder.AddScheme<JwtAuthenticationOptions, JwtAuthenticationHandler>("Bearer", o =>
             {
                 o.Authority = jwtAuthority;
