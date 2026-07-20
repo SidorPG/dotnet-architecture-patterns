@@ -26,12 +26,12 @@
     <PackageVersion Include="Newtonsoft.Json"                                   Version="13.0.3" />
     <PackageVersion Include="Dapper"                                            Version="2.1.35" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions"        Version="8.0.1" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect"  Version="8.0.2" />
   </ItemGroup>
 
   <!-- API -->
   <ItemGroup>
     <PackageVersion Include="Swashbuckle.AspNetCore"                            Version="6.9.0" />
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer"    Version="8.0.11" />
   </ItemGroup>
 
   <!-- Tests -->

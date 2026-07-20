@@ -11,7 +11,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApiLayer(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         services
             .AddControllers(o => o.Conventions.Add(new AuthorizeByRequestConvention()))
@@ -28,7 +29,6 @@ public static class DependencyInjection
                 Description = "CQRS · MediatR · DDD · Result pattern · Auth pipeline demo"
             });
 
-            // Bearer security definition — enables the padlock icon and Authorize button.
             var scheme = new OpenApiSecurityScheme
             {
                 Name         = "Authorization",
@@ -50,27 +50,24 @@ public static class DependencyInjection
                     """
             };
             c.AddSecurityDefinition("Bearer", scheme);
-
-            // Per-operation filter — adds padlock + 401/403 to endpoints that declare [Authorize].
             c.OperationFilter<AuthorizationOperationFilter>();
         });
 
-        // Authentication: real JWT when Auth:Authority is set; demo auto-auth otherwise.
         var jwtAuthority = configuration["Auth:Authority"];
         var authBuilder  = services.AddAuthentication("Bearer");
 
         if (!string.IsNullOrWhiteSpace(jwtAuthority))
         {
-            authBuilder.AddJwtBearer("Bearer", o =>
+            // Production: validate JWT signature, expiry, and audience via OIDC discovery.
+            authBuilder.AddScheme<JwtAuthenticationOptions, JwtAuthenticationHandler>("Bearer", o =>
             {
                 o.Authority = jwtAuthority;
-                o.Audience  = configuration["Auth:Audience"];
+                o.Audience  = configuration["Auth:Audience"] ?? string.Empty;
             });
         }
-        else
+        else if (environment.IsDevelopment())
         {
-            // Demo mode: auto-authenticates every request so [Authorize] on controllers
-            // passes at the HTTP layer. Permission checks still run in the MediatR pipeline.
+            // Development demo: token value = comma-separated permission claim names.
             authBuilder.AddScheme<AuthenticationSchemeOptions, DemoAuthenticationHandler>(
                 "Bearer", _ => { });
         }
