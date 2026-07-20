@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Reflection;
@@ -22,8 +21,11 @@ public class AuthorizationOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        var hasAuthorize = context.ApiDescription.ActionDescriptor.FilterDescriptors
-            .Any(f => f.Filter is AuthorizeFilter or IAuthorizeData);
+        // EndpointMetadata is populated from both class- and method-level attributes,
+        // making it more reliable than FilterDescriptors for class-level [Authorize].
+        var hasAuthorize = context.ApiDescription.ActionDescriptor.EndpointMetadata
+            .OfType<IAuthorizeData>()
+            .Any();
 
         if (!hasAuthorize)
             return;
