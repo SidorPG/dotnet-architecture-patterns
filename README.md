@@ -600,3 +600,9 @@ OnPaymentCompleted (Outbox → MediatR)
 | Auth           | Custom AuthenticationHandler pair (Demo + JWT/OIDC) |
 | Tests          | xUnit, Testcontainers, WebApplicationFactory        |
 | DevOps         | Docker Compose                                      |
+
+---
+
+## Further reading
+
+[Engineering case studies](docs/engineering-case-studies.md) — write-ups of DI lifecycle bugs, abstraction leaks, and SOLID refactors from past production work.
