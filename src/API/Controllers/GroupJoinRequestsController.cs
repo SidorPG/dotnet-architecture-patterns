@@ -39,11 +39,10 @@ public class GroupJoinRequestsController : ControllerBase
 
     /// <summary>Gets a single join request by ID.</summary>
     /// <response code="200">Request found.</response>
-    /// <response code="401">Not authenticated.</response>
     /// <response code="404">Request not found.</response>
     [HttpGet("{id:guid}")]
+    [RequiredPermission(Application.Common.Authorization.Permissions.JoinRequests.Read)]
     [ProducesResponseType(typeof(GroupJoinRequestDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
     {

@@ -1,3 +1,4 @@
+using Application.Common.Authorization;
 using System.Net;
 using System.Net.Http.Json;
 using Xunit;
@@ -11,10 +12,19 @@ namespace Integration.Tests;
 /// </summary>
 public class GroupJoinRequestsEndpointTests : IClassFixture<IntegrationTestFactory>
 {
+    private readonly IntegrationTestFactory _factory;
+
+    // Client pre-authorized with all permissions — used for the happy-path tests.
     private readonly HttpClient _client;
 
     public GroupJoinRequestsEndpointTests(IntegrationTestFactory factory)
-        => _client = factory.CreateClient();
+    {
+        _factory = factory;
+        _client  = factory.CreateClientWithPermissions(
+            Permissions.JoinRequests.Read,
+            Permissions.JoinRequests.StudentWrite,
+            Permissions.JoinRequests.InstructorWrite);
+    }
 
     // ── DTOs for response deserialization ────────────────────────────
     private record SubmitResultDto(Guid Id);
@@ -27,7 +37,7 @@ public class GroupJoinRequestsEndpointTests : IClassFixture<IntegrationTestFacto
         decimal?        AgreedPrice,
         string?         AgreedCurrency);
 
-    // ── Tests ─────────────────────────────────────────────────────────
+    // ── Happy-path tests ──────────────────────────────────────────────
 
     [Fact]
     public async Task Submit_Returns201_WithNewId()
@@ -86,14 +96,12 @@ public class GroupJoinRequestsEndpointTests : IClassFixture<IntegrationTestFacto
     {
         var id = await SubmitRequest();
 
-        // Accept the request
         var acceptResponse = await _client.PostAsJsonAsync(
             $"/api/v1/group-join-requests/{id}/accept",
             new { agreedPrice = 599.00m, agreedCurrency = "EUR" });
 
         Assert.Equal(HttpStatusCode.NoContent, acceptResponse.StatusCode);
 
-        // Verify the domain state transitioned
         var dto = await GetRequest(id);
         Assert.Equal("PendingPayment", dto.Status);
         Assert.Equal(599.00m, dto.AgreedPrice);
@@ -109,7 +117,6 @@ public class GroupJoinRequestsEndpointTests : IClassFixture<IntegrationTestFacto
             $"/api/v1/group-join-requests/{id}/accept",
             new { agreedPrice = 100m, agreedCurrency = "EUR" });
 
-        // Second accept must violate the domain guard
         var response = await _client.PostAsJsonAsync(
             $"/api/v1/group-join-requests/{id}/accept",
             new { agreedPrice = 200m, agreedCurrency = "USD" });
@@ -125,6 +132,42 @@ public class GroupJoinRequestsEndpointTests : IClassFixture<IntegrationTestFacto
             new { agreedPrice = 100m, agreedCurrency = "EUR" });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ── Authorization tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task AnyEndpoint_WithoutToken_Returns401()
+    {
+        var anonymous = _factory.CreateClient(); // no Authorization header
+
+        var response = await anonymous.GetAsync("/api/v1/group-join-requests");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPending_WithStudentPermissionOnly_Returns403()
+    {
+        var student = _factory.CreateClientWithPermissions(Permissions.JoinRequests.StudentWrite);
+
+        var response = await student.GetAsync("/api/v1/group-join-requests");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Submit_WithInstructorPermissionOnly_Returns403()
+    {
+        var instructor = _factory.CreateClientWithPermissions(Permissions.JoinRequests.InstructorWrite);
+
+        var response = await instructor.PostAsJsonAsync("/api/v1/group-join-requests", new
+        {
+            studentId = Guid.NewGuid(),
+            groupId   = Guid.NewGuid()
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────

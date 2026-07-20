@@ -36,7 +36,18 @@ public static class DependencyInjection
                 Scheme       = "bearer",
                 BearerFormat = "JWT",
                 In           = ParameterLocation.Header,
-                Description  = "Paste a JWT access token. In demo mode any value is accepted."
+                Description  = """
+                    **Production**: paste a JWT access token from your OIDC provider.
+
+                    **Demo mode** (no Auth:Authority configured): enter a comma-separated list
+                    of permission claim names to simulate different roles, e.g.:
+                    - `joinrequests:read` — read any request
+                    - `joinrequests:student` — submit requests
+                    - `joinrequests:instructor` — view pending + accept
+                    - `joinrequests:instructor,joinrequests:read` — combine freely
+
+                    No Authorization header → **401**. Wrong claims → **403**.
+                    """
             };
             c.AddSecurityDefinition("Bearer", scheme);
 

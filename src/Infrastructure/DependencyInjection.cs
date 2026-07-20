@@ -47,12 +47,9 @@ public static class DependencyInjection
         // ── Identity ──────────────────────────────────────────────────
         services.AddHttpContextAccessor();
 
-        var jwtAuthority = configuration["Auth:Authority"];
-        if (string.IsNullOrWhiteSpace(jwtAuthority))
-            // Demo mode: every request is treated as authenticated (no OIDC required).
-            services.AddScoped<ICurrentUser, AnonymousCurrentUser>();
-        else
-            services.AddScoped<ICurrentUser, CurrentUser>();
+        // CurrentUser reads NameIdentifier from HttpContext.User — works in both real JWT
+        // and demo modes because DemoAuthenticationHandler always sets that claim.
+        services.AddScoped<ICurrentUser, CurrentUser>();
 
         services.AddScoped<IPermissionService, PermissionService>();
 

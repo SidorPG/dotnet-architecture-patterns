@@ -31,10 +31,12 @@ public class AuthorizationOperationFilter : IOperationFilter
             return;
 
         // Padlock icon in Swagger UI — signals that a Bearer token is required.
+        // OpenApiOperation.Security is nullable; initialize before adding.
         var bearerRef = new OpenApiSecurityScheme
         {
             Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
         };
+        operation.Security ??= [];
         operation.Security.Add(new OpenApiSecurityRequirement { [bearerRef] = [] });
 
         operation.Responses.TryAdd("401", new OpenApiResponse

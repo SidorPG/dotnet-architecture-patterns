@@ -8,8 +8,8 @@ namespace Infrastructure.Identity;
 /// Each permission string (e.g. "joinrequests:instructor") must appear as a claim
 /// on the token — the issuer is responsible for embedding them at login.
 ///
-/// Demo / anonymous mode: when UserId is Guid.Empty (AnonymousCurrentUser),
-/// all permissions are granted so the pipeline runs end-to-end without OIDC.
+/// In demo mode DemoAuthenticationHandler parses the Bearer token value as
+/// comma-separated claim names, so the same check works without a real OIDC server.
 /// </summary>
 public class PermissionService : IPermissionService
 {
@@ -20,10 +20,6 @@ public class PermissionService : IPermissionService
 
     public Task<bool> HasPermissionAsync(Guid userId, string permission, CancellationToken ct)
     {
-        // Guid.Empty is the sentinel for AnonymousCurrentUser (demo mode).
-        if (userId == Guid.Empty)
-            return Task.FromResult(true);
-
         var user = _accessor.HttpContext?.User;
         if (user is null)
             return Task.FromResult(false);

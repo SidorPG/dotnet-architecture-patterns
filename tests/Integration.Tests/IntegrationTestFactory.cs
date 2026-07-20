@@ -2,6 +2,7 @@ using DotNet.Testcontainers.Builders;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using System.Net.Http.Headers;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -23,15 +24,26 @@ public class IntegrationTestFactory : WebApplicationFactory<Program>, IAsyncLife
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Override the connection string so EF Core targets the test container,
-        // not whatever is configured in appsettings.json.
         builder.ConfigureAppConfiguration((_, config) =>
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = _postgres.GetConnectionString(),
-                // Empty Authority → AnonymousCurrentUser (no OIDC needed in tests).
+                // Empty Authority → DemoAuthenticationHandler (no OIDC needed in tests).
                 ["Auth:Authority"] = ""
             }));
+    }
+
+    /// <summary>
+    /// Creates an HTTP client pre-authorized with the specified demo permission claims.
+    /// DemoAuthenticationHandler parses the token value as comma-separated claim names.
+    /// </summary>
+    public HttpClient CreateClientWithPermissions(params string[] permissions)
+    {
+        var client = CreateClient();
+        var token  = string.Join(",", permissions);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+        return client;
     }
 
     public async Task InitializeAsync() => await _postgres.StartAsync();

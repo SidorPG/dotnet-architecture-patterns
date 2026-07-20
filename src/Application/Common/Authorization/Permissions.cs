@@ -15,6 +15,7 @@ public static class Permissions
 
     public static class JoinRequests
     {
+        public const string Read            = "joinrequests:read";
         public const string StudentWrite    = "joinrequests:student";
         public const string InstructorWrite = "joinrequests:instructor";
     }
