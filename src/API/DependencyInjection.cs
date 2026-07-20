@@ -1,5 +1,9 @@
+using API.Swagger;
+using Infrastructure.Identity;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Models;
+using System.Text.Json.Serialization;
 
 namespace API;
 
@@ -12,14 +16,38 @@ public static class DependencyInjection
         services
             .AddControllers(o => o.Conventions.Add(new AuthorizeByRequestConvention()))
             .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(
-                new System.Text.Json.Serialization.JsonStringEnumConverter()));
+                new JsonStringEnumConverter()));
 
         services.AddEndpointsApiExplorer();
-        services.AddSwaggerGen();
+        services.AddSwaggerGen(c =>
+        {
+            c.SwaggerDoc("v1", new OpenApiInfo
+            {
+                Title   = "Dotnet Architecture Patterns",
+                Version = "v1",
+                Description = "CQRS · MediatR · DDD · Result pattern · Auth pipeline demo"
+            });
 
-        // JWT is optional — omit Auth:Authority in config to skip validation (demo mode).
+            // Bearer security definition — enables the padlock icon and Authorize button.
+            var scheme = new OpenApiSecurityScheme
+            {
+                Name         = "Authorization",
+                Type         = SecuritySchemeType.Http,
+                Scheme       = "bearer",
+                BearerFormat = "JWT",
+                In           = ParameterLocation.Header,
+                Description  = "Paste a JWT access token. In demo mode any value is accepted."
+            };
+            c.AddSecurityDefinition("Bearer", scheme);
+
+            // Per-operation filter — adds padlock + 401/403 to endpoints that declare [Authorize].
+            c.OperationFilter<AuthorizationOperationFilter>();
+        });
+
+        // Authentication: real JWT when Auth:Authority is set; demo auto-auth otherwise.
         var jwtAuthority = configuration["Auth:Authority"];
-        var authBuilder = services.AddAuthentication("Bearer");
+        var authBuilder  = services.AddAuthentication("Bearer");
+
         if (!string.IsNullOrWhiteSpace(jwtAuthority))
         {
             authBuilder.AddJwtBearer("Bearer", o =>
@@ -27,6 +55,13 @@ public static class DependencyInjection
                 o.Authority = jwtAuthority;
                 o.Audience  = configuration["Auth:Audience"];
             });
+        }
+        else
+        {
+            // Demo mode: auto-authenticates every request so [Authorize] on controllers
+            // passes at the HTTP layer. Permission checks still run in the MediatR pipeline.
+            authBuilder.AddScheme<AuthenticationSchemeOptions, DemoAuthenticationHandler>(
+                "Bearer", _ => { });
         }
 
         services.AddAuthorization();

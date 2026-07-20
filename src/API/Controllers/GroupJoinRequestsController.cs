@@ -1,7 +1,9 @@
+using API.Swagger;
 using Application.Common.Interfaces;
 using Application.GroupJoinRequests;
 using Domain.Ids;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AcceptCommand = Application.GroupJoinRequests.AcceptGroupJoinRequest.Command;
 using GetByIdQuery = Application.GroupJoinRequests.GetGroupJoinRequest.Query;
@@ -11,6 +13,7 @@ using SubmitCommand = Application.GroupJoinRequests.SubmitGroupJoinRequest.Comma
 namespace API.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/v1/group-join-requests")]
 public class GroupJoinRequestsController : ControllerBase
 {
@@ -25,10 +28,9 @@ public class GroupJoinRequestsController : ControllerBase
 
     /// <summary>Returns all pending-approval join requests.</summary>
     /// <response code="200">List of pending requests (may be empty).</response>
-    /// <response code="401">Not authenticated.</response>
     [HttpGet]
+    [RequiredPermission(Application.Common.Authorization.Permissions.JoinRequests.InstructorWrite)]
     [ProducesResponseType(typeof(IReadOnlyList<GroupJoinRequestDto>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetPending(CancellationToken ct)
     {
         var result = await _sender.Send(new GetPendingQuery(), ct);
@@ -52,11 +54,10 @@ public class GroupJoinRequestsController : ControllerBase
     /// <summary>Submits a new group join request.</summary>
     /// <response code="201">Created — returns the new request ID.</response>
     /// <response code="400">Validation error.</response>
-    /// <response code="401">Not authenticated.</response>
     [HttpPost]
+    [RequiredPermission(Application.Common.Authorization.Permissions.JoinRequests.StudentWrite)]
     [ProducesResponseType(typeof(SubmitResult), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Submit([FromBody] SubmitBody body, CancellationToken ct)
     {
         var command = new SubmitCommand(new StudentId(body.StudentId), new GroupId(body.GroupId));
@@ -77,14 +78,11 @@ public class GroupJoinRequestsController : ControllerBase
     /// </summary>
     /// <response code="204">Accepted successfully.</response>
     /// <response code="400">Validation error or domain guard violation.</response>
-    /// <response code="401">Not authenticated.</response>
-    /// <response code="403">Missing instructor permission.</response>
     /// <response code="404">Request not found.</response>
     [HttpPost("{id:guid}/accept")]
+    [RequiredPermission(Application.Common.Authorization.Permissions.JoinRequests.InstructorWrite)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Accept(Guid id, [FromBody] AcceptBody body, CancellationToken ct)
     {
