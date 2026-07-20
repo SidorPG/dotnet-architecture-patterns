@@ -1,14 +1,35 @@
 # dotnet-architecture-patterns
 
-Ten backend patterns from a production .NET 8 driving-school management system.
+Twelve backend patterns from a production .NET 8 driving-school management system.
 The **group-join flow** (student requests → instructor accepts → payment → confirmed)
 threads through all of them end-to-end.
 
-Stack: **.NET 8 · ASP.NET Core · EF Core 8 · MediatR · FluentValidation · PostgreSQL · Vue 3**
+Stack: **.NET 8 · ASP.NET Core · EF Core 8 · MediatR · FluentValidation · PostgreSQL**
 
 ---
 
-## Table of Contents
+## Try it
+
+```bash
+docker compose up          # PostgreSQL + API on :5000
+```
+
+Swagger UI at **http://localhost:5000/swagger**
+
+To explore authorization, click **Authorize** and enter a comma-separated list of
+permission claim names as the token value (no real OIDC server required):
+
+| Token value               | What it unlocks                              |
+| ------------------------- | -------------------------------------------- |
+| `joinrequests:read`       | GET `/{id}`                                  |
+| `joinrequests:student`    | POST `/` (submit)                            |
+| `joinrequests:instructor` | GET `/` (pending list) · POST `/{id}/accept` |
+
+No token → **401**. Wrong permission → **403**. The full auth pipeline runs end-to-end.
+
+---
+
+## Patterns
 
 1. [Result Pattern](#1-result-pattern)
 2. [Domain Entity with Factory Method](#2-domain-entity-with-factory-method)
@@ -20,6 +41,8 @@ Stack: **.NET 8 · ASP.NET Core · EF Core 8 · MediatR · FluentValidation · P
 8. [EF Core Interceptor Chain](#8-ef-core-interceptor-chain)
 9. [Global Query Filter with TPH Guard](#9-global-query-filter-with-tph-guard)
 10. [Zero-Attribute Authorization Convention](#10-zero-attribute-authorization-convention)
+11. [Dual Authentication Handlers](#11-dual-authentication-handlers)
+12. [Swagger Authorization Metadata](#12-swagger-authorization-metadata)
 
 ---
 
@@ -32,7 +55,7 @@ public async Task<Result> Handle(Command request, CancellationToken ct)
 {
     var joinRequest = await _db.GroupJoinRequests.FindAsync(request.RequestId, ct);
     if (joinRequest is null)
-        return Result.Failure("Join request not found");   // ← not NotFoundException
+        return Result.NotFound();           // ← not NotFoundException
 
     joinRequest.Accept(instructorId, request.AgreedPrice, request.AgreedCurrency);
     await _db.SaveChangesAsync(ct);
@@ -40,7 +63,7 @@ public async Task<Result> Handle(Command request, CancellationToken ct)
 }
 ```
 
-Controllers map `Result` to HTTP via `ResultExtensions.ToActionResult()`.
+Controllers map `Result` to HTTP status codes directly — no middleware magic needed.
 
 > **File:** [`src/Domain/Abstractions/Result.cs`](src/Domain/Abstractions/Result.cs)
 
@@ -74,7 +97,7 @@ public class GroupJoinRequest : AuditableEntity<GroupJoinRequestId>
 }
 ```
 
-Domain events accumulate in memory on `Entity` base class, then the
+Domain events accumulate in memory on the `Entity` base class, then
 `DomainEventDispatcherInterceptor` writes them to the Outbox atomically on `SaveChanges`.
 
 > **Files:**
@@ -130,12 +153,10 @@ converts these to `Result.Failure()` — handlers never need try/catch.
 public sealed class DomainExceptionBehavior<TRequest, TResponse>
     : IPipelineBehavior<TRequest, TResponse>
 {
-    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    public async Task<TResponse> Handle(
+        TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
     {
-        try
-        {
-            return await next();
-        }
+        try { return await next(); }
         catch (DomainException ex)
         {
             // Works for both Result and Result<T> via reflection —
@@ -173,9 +194,7 @@ source generator. Passing a `StudentId` where a `GroupId` is expected is a compi
 [StronglyTypedId] public partial struct GroupId;
 ```
 
-The generator produces EF Core value converters, JSON serialization, and a Swagger schema
-filter that renders each ID as `uuid` in the OpenAPI spec. On the frontend,
-`npm run openapi:generate` regenerates TypeScript types from that spec automatically.
+The generator produces EF Core value converters and JSON serialization automatically.
 
 > **File:** [`src/Domain/Ids/StronglyTypedIds.cs`](src/Domain/Ids/StronglyTypedIds.cs)
 
@@ -219,8 +238,8 @@ public void StartAwaitingPayment(PaymentId paymentId)
 
 Domain events survive a crash between commit and publish. Two components:
 
-**Write path** — `DomainEventDispatcherInterceptor` (EF Core `SaveChangesInterceptor`)
-serialises events to `OutboxMessage` rows in the **same transaction**:
+**Write path** — `DomainEventDispatcherInterceptor` serialises events to `OutboxMessage`
+rows in the **same transaction**:
 
 ```csharp
 var domainEvents = context.ChangeTracker
@@ -228,15 +247,13 @@ var domainEvents = context.ChangeTracker
     .SelectMany(e => e.Entity.PopDomainEvents())
     .ToList();
 
-var messages = domainEvents.Select(e => new OutboxMessage {
+context.Set<OutboxMessage>().AddRange(domainEvents.Select(e => new OutboxMessage {
     Id        = Guid.NewGuid(),
     EventType = e.GetType().AssemblyQualifiedName!,
     Payload   = JsonConvert.SerializeObject(e),
     CreatedAt = DateTime.UtcNow,
-});
-
-context.Set<OutboxMessage>().AddRange(messages);
-// base.SavingChangesAsync() → both business data and outbox messages commit atomically
+}));
+// base.SavingChangesAsync() → business data + outbox rows commit atomically
 ```
 
 **Read path** — `OutboxProcessor` (`BackgroundService`, every 10 s):
@@ -252,7 +269,7 @@ foreach (var message in messages)
 {
     var eventType   = Type.GetType(message.EventType);
     var domainEvent = (IDomainEvent)JsonConvert.DeserializeObject(message.Payload, eventType)!;
-    await publisher.Publish(domainEvent, ct);    // → INotificationHandler<T>
+    await publisher.Publish(domainEvent, ct);   // → INotificationHandler<T>
     message.SentAt = DateTime.UtcNow;
 }
 ```
@@ -265,27 +282,22 @@ foreach (var message in messages)
 
 ## 8. EF Core Interceptor Chain
 
-Four `SaveChangesInterceptor` implementations, each with a single responsibility,
-composing via `base.SavingChangesAsync()`:
+Four `SaveChangesInterceptor` implementations compose via `base.SavingChangesAsync()`,
+each with a single responsibility:
 
 ```
 SaveChanges called
   │
-  ├─ SoftDeleteInterceptor    intercepts EntityState.Deleted
-  │                           → calls MarkDeleted() + sets state to Modified
-  │                           (domain entity has zero EF knowledge)
-  │
-  ├─ AuditInterceptor         stamps CreatedAt / UpdatedAt from ICurrentUser
-  │                           skips soft-deleted entries (already stamped by MarkDeleted)
-  │
-  ├─ DomainEventDispatcherInterceptor  pops domain events → OutboxMessage rows
-  │
-  └─ DateTimeInterceptor      normalises DateOnly / TimeOnly UTC offsets
+  ├─ SoftDeleteInterceptor         EntityState.Deleted → calls MarkDeleted() + Modified
+  │                                domain entity has zero EF knowledge
+  ├─ AuditInterceptor              stamps CreatedAt / UpdatedAt
+  ├─ DateTimeInterceptor           normalises DateTimeKind.Unspecified → UTC (PostgreSQL safety)
+  └─ DomainEventDispatcherInterceptor  pops domain events → OutboxMessage rows
 ```
 
 ```csharp
-// SoftDeleteInterceptor — the redirect pattern
-private void Apply(DbContext context)
+// SoftDeleteInterceptor — redirect pattern: no DELETE SQL emitted
+private static void Apply(DbContext context)
 {
     foreach (var entry in context.ChangeTracker.Entries())
     {
@@ -293,7 +305,7 @@ private void Apply(DbContext context)
         if (entry.Entity is not AuditableEntity entity) continue;
 
         entity.MarkDeleted(DateTime.UtcNow);
-        entry.State = EntityState.Modified;   // ← no DELETE SQL is emitted
+        entry.State = EntityState.Modified;
     }
 }
 ```
@@ -301,13 +313,14 @@ private void Apply(DbContext context)
 > **Files:**
 > [`src/Infrastructure/Persistence/EF/SoftDeleteInterceptor.cs`](src/Infrastructure/Persistence/EF/SoftDeleteInterceptor.cs)
 > · [`src/Infrastructure/Persistence/EF/AuditInterceptor.cs`](src/Infrastructure/Persistence/EF/AuditInterceptor.cs)
+> · [`src/Infrastructure/Persistence/EF/DateTimeInterceptor.cs`](src/Infrastructure/Persistence/EF/DateTimeInterceptor.cs)
 
 ---
 
 ## 9. Global Query Filter with TPH Guard
 
-A generic helper applies the soft-delete filter (`!e.IsDeleted`) to every entity type
-inheriting from `AuditableEntity` — without listing each type manually.
+A generic helper applies the soft-delete filter to every entity inheriting from
+`AuditableEntity` — without listing each type manually.
 
 The non-obvious detail: EF Core only allows `HasQueryFilter` on the **root** of a
 Table-per-Hierarchy (TPH) hierarchy. The guard `entityType.BaseType != null` skips
@@ -321,9 +334,7 @@ public static void ApplyGlobalFilter<TBase>(
     foreach (var entityType in modelBuilder.Model.GetEntityTypes())
     {
         if (!typeof(TBase).IsAssignableFrom(entityType.ClrType)) continue;
-
-        // TPH: filter may only be set on the root type.
-        if (entityType.BaseType != null) continue;
+        if (entityType.BaseType != null) continue;          // TPH guard
 
         var parameter = Expression.Parameter(entityType.ClrType);
         var body      = ReplacingExpressionVisitor.Replace(
@@ -335,7 +346,7 @@ public static void ApplyGlobalFilter<TBase>(
     }
 }
 
-// Usage in OnModelCreating:
+// OnModelCreating:
 // modelBuilder.ApplyGlobalFilter<AuditableEntity>(e => !e.IsDeleted);
 ```
 
@@ -346,8 +357,8 @@ public static void ApplyGlobalFilter<TBase>(
 ## 10. Zero-Attribute Authorization Convention
 
 An `IActionModelConvention` automatically applies `[Authorize]` to any controller action
-whose bound parameter implements `IAuthorizedRequest`. Result: **zero `[Authorize]` attributes**
-in the codebase. Authorization intent lives on the command record.
+whose bound parameter implements `IAuthorizedRequest`. Authorization intent lives on the
+command record — controllers stay annotation-free.
 
 ```csharp
 public class AuthorizeByRequestConvention : IActionModelConvention
@@ -362,12 +373,185 @@ public class AuthorizeByRequestConvention : IActionModelConvention
     }
 }
 
-// Registered once in Program.cs:
+// Registered once:
 // builder.Services.AddControllers(o =>
 //     o.Conventions.Add(new AuthorizeByRequestConvention()));
 ```
 
+> **Note:** The convention works when actions accept command/query records directly.
+> When actions take separate DTO types (as in this demo's `SubmitBody`, `AcceptBody`),
+> `[Authorize]` is placed on the controller class and `[RequiredPermission]` on each action —
+> see §12 for how Swagger picks that up.
+
 > **File:** [`src/API/AuthorizeByRequestConvention.cs`](src/API/AuthorizeByRequestConvention.cs)
+
+---
+
+## 11. Dual Authentication Handlers
+
+Two `AuthenticationHandler<T>` implementations sit side by side — one for development,
+one for production. Same structural contract, different validation logic.
+
+```
+src/Infrastructure/Identity/
+  ├── DemoAuthenticationHandler.cs   ← Development: no OIDC server required
+  └── JwtAuthenticationHandler.cs    ← Production:  OIDC discovery + signature validation
+```
+
+**`DemoAuthenticationHandler`** — parses the Bearer token value as comma-separated
+permission claim names:
+
+```csharp
+// Token: "joinrequests:instructor,joinrequests:read"
+// → ClaimsIdentity with two claims of those types
+// No header → AuthenticateResult.NoResult() → 401
+foreach (var perm in token.Split(',', ...))
+    claims.Add(new Claim(perm, "true"));
+```
+
+**`JwtAuthenticationHandler`** — fetches JWKS from the OIDC discovery document and
+validates the JWT signature, expiry, issuer, and audience:
+
+```csharp
+var config = await manager.GetConfigurationAsync(ct);  // cached, auto-refreshes on key rotation
+
+var parameters = new TokenValidationParameters
+{
+    ValidIssuer       = Options.Authority,
+    ValidAudience     = Options.Audience,
+    IssuerSigningKeys = config.SigningKeys,
+    ValidateLifetime  = true,
+};
+var principal = _tokenHandler.ValidateToken(token, parameters, out _);
+```
+
+> `ConfigurationManager<OpenIdConnectConfiguration>` handles JWKS caching and transparent
+> key refresh — the same mechanism `AddJwtBearer` uses internally.
+> In a typical project the production branch is just `authBuilder.AddJwtBearer(o => { ... })`.
+
+DI selects the handler based on configuration and environment:
+
+```csharp
+if (!string.IsNullOrWhiteSpace(jwtAuthority))
+    authBuilder.AddScheme<JwtAuthenticationOptions, JwtAuthenticationHandler>("Bearer", o => ...);
+else if (environment.IsDevelopment())
+    authBuilder.AddScheme<AuthenticationSchemeOptions, DemoAuthenticationHandler>("Bearer", _ => { });
+```
+
+> **Files:**
+> [`src/Infrastructure/Identity/DemoAuthenticationHandler.cs`](src/Infrastructure/Identity/DemoAuthenticationHandler.cs)
+> · [`src/Infrastructure/Identity/JwtAuthenticationHandler.cs`](src/Infrastructure/Identity/JwtAuthenticationHandler.cs)
+> · [`src/Infrastructure/Identity/PermissionService.cs`](src/Infrastructure/Identity/PermissionService.cs)
+
+---
+
+## 12. Swagger Authorization Metadata
+
+An `IOperationFilter` reads `[Authorize]` and a custom `[RequiredPermission]` attribute
+to annotate each endpoint in the generated OpenAPI spec — padlock icon, 401/403 responses,
+and the required claim name — without duplicating that information in XML doc comments.
+
+```csharp
+public class AuthorizationOperationFilter : IOperationFilter
+{
+    public void Apply(OpenApiOperation operation, OperationFilterContext context)
+    {
+        var hasAuthorize = context.MethodInfo
+            .GetCustomAttributes<AuthorizeAttribute>(inherit: true).Any()
+            || (context.MethodInfo.DeclaringType?
+                .GetCustomAttributes<AuthorizeAttribute>(inherit: false).Any() ?? false);
+
+        if (!hasAuthorize) return;
+
+        operation.Security ??= [];
+        operation.Security.Add(new OpenApiSecurityRequirement { [bearerRef] = [] }); // padlock
+
+        operation.Responses.TryAdd("401", new OpenApiResponse { Description = "Unauthorized" });
+
+        var permission = context.MethodInfo.GetCustomAttribute<RequiredPermissionAttribute>();
+        if (permission is null) return;
+
+        operation.Description += $"\nRequires JWT claim: `{permission.Permission}`";
+        operation.Responses.TryAdd("403", new OpenApiResponse {
+            Description = $"Forbidden — JWT lacks the `{permission.Permission}` claim"
+        });
+    }
+}
+```
+
+Applied on the controller:
+
+```csharp
+[Authorize]
+public class GroupJoinRequestsController : ControllerBase
+{
+    [HttpGet]
+    [RequiredPermission(Permissions.JoinRequests.InstructorWrite)]
+    public async Task<IActionResult> GetPending(...) { ... }
+
+    [HttpPost("{id:guid}/accept")]
+    [RequiredPermission(Permissions.JoinRequests.InstructorWrite)]
+    public async Task<IActionResult> Accept(...) { ... }
+
+    [HttpPost]
+    [RequiredPermission(Permissions.JoinRequests.StudentWrite)]
+    public async Task<IActionResult> Submit(...) { ... }
+}
+```
+
+> **Files:**
+> [`src/API/Swagger/AuthorizationOperationFilter.cs`](src/API/Swagger/AuthorizationOperationFilter.cs)
+> · [`src/API/Swagger/RequiredPermissionAttribute.cs`](src/API/Swagger/RequiredPermissionAttribute.cs)
+
+---
+
+## Integration tests
+
+10 tests against a **real PostgreSQL container** via Testcontainers — no mocks in the
+database or HTTP layer. The factory boots the full ASP.NET Core pipeline (migrations
+included) and is shared across tests to avoid per-test container startup overhead.
+
+```csharp
+public class IntegrationTestFactory : WebApplicationFactory<Program>, IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
+        .WithImage("postgres:16-alpine").Build();
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+        => builder.ConfigureAppConfiguration((_, cfg) =>
+            cfg.AddInMemoryCollection(new Dictionary<string, string?> {
+                ["ConnectionStrings:DefaultConnection"] = _postgres.GetConnectionString(),
+                ["Auth:Authority"] = ""   // → DemoAuthenticationHandler
+            }));
+
+    public HttpClient CreateClientWithPermissions(params string[] permissions)
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", string.Join(",", permissions));
+        return client;
+    }
+}
+```
+
+Test coverage includes the authorization layer:
+
+```csharp
+[Fact]
+public async Task AnyEndpoint_WithoutToken_Returns401()
+    => Assert.Equal(HttpStatusCode.Unauthorized,
+        (await _factory.CreateClient().GetAsync("/api/v1/group-join-requests")).StatusCode);
+
+[Fact]
+public async Task GetPending_WithStudentPermissionOnly_Returns403()
+    => Assert.Equal(HttpStatusCode.Forbidden,
+        (await _factory.CreateClientWithPermissions(Permissions.JoinRequests.StudentWrite)
+            .GetAsync("/api/v1/group-join-requests")).StatusCode);
+```
+
+> **Files:**
+> [`tests/Integration.Tests/IntegrationTestFactory.cs`](tests/Integration.Tests/IntegrationTestFactory.cs)
+> · [`tests/Integration.Tests/GroupJoinRequestsEndpointTests.cs`](tests/Integration.Tests/GroupJoinRequestsEndpointTests.cs)
 
 ---
 
@@ -380,11 +564,11 @@ Student submits request
                                           [§8] AuditInterceptor stamps CreatedAt
 
 Instructor accepts
-  → AcceptGroupJoinRequest.Command        [§3] IAuthorizedRequest → permission check
+  → AcceptGroupJoinRequest.Command        [§3] IAuthorizedRequest → permission declared
   → AuthorizationBehavior                 [§3] verifies joinrequests:instructor claim
   → ValidationBehavior                    [§3] FluentValidation runs
-  → Handler calls joinRequest.Accept()    [§2] state transition + raises event
-  → DomainExceptionBehavior               [§4] catches guard violations → Result.Failure
+  → Handler calls joinRequest.Accept()    [§2] state transition + raises domain event
+  → DomainExceptionBehavior               [§4] guard violation → Result.Failure, not exception
   → SaveChanges                           [§7] event written to outbox
                                           [§8] AuditInterceptor stamps UpdatedAt
 
@@ -400,67 +584,19 @@ OnPaymentCompleted (Outbox → MediatR)
   → pm.MarkCompleted()                    [§6] PM enforces valid state transition
   → joinRequest.Confirm()
   → student.AssignToGroup()
-  → single SaveChanges                    atomic — all three aggregates in one tx
+  → single SaveChanges                    atomic — all three aggregates in one transaction
 ```
-
----
-
-## Running locally
-
-```bash
-# Full stack (PostgreSQL + API + frontend)
-docker compose up
-
-# API only (port 5000)
-dotnet run --project src/API
-
-# Frontend dev server (port 5173, proxies /api to :5000)
-cd frontend && npm install && npm run dev
-```
-
-After changing a C# DTO or adding an endpoint, regenerate the TypeScript types:
-
-```bash
-cd frontend
-npm run openapi:generate   # reads openapi.json → overwrites src/api/schemas.ts
-```
-
----
-
-## Frontend type-safety flow
-
-```
-C# record (GroupJoinRequestDto)
-  │  Swagger / Swashbuckle
-  ▼
-openapi.json  ←  committed snapshot, updated when API contract changes
-  │  npm run openapi:generate  (openapi-typescript)
-  ▼
-src/api/schemas.ts  ←  READ ONLY — never edit by hand
-  │  import type { components }
-  ▼
-groupJoinRequestsService.ts  →  groupJoinRequestsStore.ts  →  GroupJoinRequestCard.vue
-```
-
-If a C# property is renamed, `openapi:generate` updates `schemas.ts`, and every
-TypeScript call-site that used the old name becomes a **compile error** — no
-runtime surprises.
-
-> **Files:**
-> [`frontend/src/api/schemas.ts`](frontend/src/api/schemas.ts)
-> · [`frontend/src/services/groupJoinRequestsService.ts`](frontend/src/services/groupJoinRequestsService.ts)
-> · [`frontend/src/stores/groupJoinRequestsStore.ts`](frontend/src/stores/groupJoinRequestsStore.ts)
-> · [`frontend/src/components/GroupJoinRequestCard.vue`](frontend/src/components/GroupJoinRequestCard.vue)
 
 ---
 
 ## Stack
 
-| Layer          | Technology                                            |
-| -------------- | ----------------------------------------------------- |
-| API            | ASP.NET Core 8                                        |
-| Application    | MediatR 12, FluentValidation 11                       |
-| Domain         | Plain C#, strongly-typed IDs (readonly record struct) |
-| Infrastructure | EF Core 8, PostgreSQL, Newtonsoft.Json                |
-| Frontend       | Vue 3, TypeScript, Pinia, openapi-typescript          |
-| DevOps         | Docker Compose (postgres + api + frontend)            |
+| Layer          | Technology                                          |
+| -------------- | --------------------------------------------------- |
+| API            | ASP.NET Core 8, Swashbuckle                         |
+| Application    | MediatR 12, FluentValidation 11                     |
+| Domain         | Plain C#, StronglyTypedId source generator          |
+| Infrastructure | EF Core 8, PostgreSQL, Dapper, Newtonsoft.Json      |
+| Auth           | Custom AuthenticationHandler pair (Demo + JWT/OIDC) |
+| Tests          | xUnit, Testcontainers, WebApplicationFactory        |
+| DevOps         | Docker Compose                                      |
