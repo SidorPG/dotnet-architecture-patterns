@@ -1,7 +1,9 @@
 using DotNet.Testcontainers.Builders;
+using MassTransit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net.Http.Headers;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -28,8 +30,21 @@ public class IntegrationTestFactory : WebApplicationFactory<Program>, IAsyncLife
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = _postgres.GetConnectionString(),
-                // Empty Authority → DemoAuthenticationHandler (no OIDC needed in tests).
-                ["Auth:Authority"] = ""
+                ["Auth:Authority"] = "",
+                // No RabbitMQ:Host → DependencyInjection falls back to in-memory transport.
+                ["RabbitMQ:Host"] = ""
+            }));
+
+        // Replace the MassTransit registration with the test harness.
+        // The harness uses an in-memory transport and provides helpers for
+        // asserting that messages were published / consumed in tests.
+        builder.ConfigureServices(services =>
+            services.AddMassTransitTestHarness(x =>
+            {
+                x.AddSagaStateMachine<Infrastructure.Messaging.GroupJoinStateMachine,
+                                      Infrastructure.Messaging.GroupJoinSagaState>();
+                x.AddConsumer<Infrastructure.Messaging.Consumers.InitiatePaymentConsumer>();
+                x.AddConsumer<Infrastructure.Messaging.Consumers.EnrollmentConfirmedConsumer>();
             }));
     }
 

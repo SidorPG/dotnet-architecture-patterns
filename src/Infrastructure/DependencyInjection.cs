@@ -1,11 +1,12 @@
 using Application.Common.Interfaces;
-using Application.GroupJoinProcessManagers;
 using Application.GroupJoinRequests;
 using Infrastructure.Identity;
-using Infrastructure.Outbox;
+using Infrastructure.Messaging;
+using Infrastructure.Messaging.Consumers;
 using Infrastructure.Persistence;
 using Infrastructure.Persistence.EF;
 using Infrastructure.QueryServices;
+using MassTransit;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -19,11 +20,13 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // ── Interceptors (order matters: each calls base, forming a chain) ──
-        services.AddScoped<SoftDeleteInterceptor>();           // 1. mark IsDeleted
-        services.AddScoped<AuditInterceptor>();                // 2. stamp CreatedAt/UpdatedAt
-        services.AddScoped<DateTimeInterceptor>();             // 3. normalise Kind=Unspecified → UTC
-        // DomainEventDispatcherInterceptor has no deps — instantiated inline (4. enqueue events)
+        // ── Interceptors ──────────────────────────────────────────────
+        services.AddScoped<SoftDeleteInterceptor>();
+        services.AddScoped<AuditInterceptor>();
+        services.AddScoped<DateTimeInterceptor>();
+        // DomainEventDispatcherInterceptor now depends on IPublishEndpoint (MassTransit)
+        // and is registered as scoped alongside the other interceptors.
+        services.AddScoped<DomainEventDispatcherInterceptor>();
 
         // ── Database ──────────────────────────────────────────────────
         services.AddDbContext<AppDbContext>((sp, options) =>
@@ -39,26 +42,68 @@ public static class DependencyInjection
                     sp.GetRequiredService<SoftDeleteInterceptor>(),
                     sp.GetRequiredService<AuditInterceptor>(),
                     sp.GetRequiredService<DateTimeInterceptor>(),
-                    new DomainEventDispatcherInterceptor());
+                    sp.GetRequiredService<DomainEventDispatcherInterceptor>());
         });
 
         services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
         // ── Identity ──────────────────────────────────────────────────
         services.AddHttpContextAccessor();
-
-        // CurrentUser reads NameIdentifier from HttpContext.User — works in both real JWT
-        // and demo modes because DemoAuthenticationHandler always sets that claim.
         services.AddScoped<ICurrentUser, CurrentUser>();
-
         services.AddScoped<IPermissionService, PermissionService>();
 
         // ── Query services ────────────────────────────────────────────
         services.AddScoped<IGroupJoinRequestQueryService, GroupJoinRequestQueryService>();
-        services.AddScoped<IGroupJoinProcessManagerQueryService, GroupJoinProcessManagerQueryService>();
 
-        // ── Background services ───────────────────────────────────────
-        services.AddHostedService<OutboxProcessor>();
+        // ── MassTransit ───────────────────────────────────────────────
+        var rabbitHost = configuration["RabbitMQ:Host"];
+
+        services.AddMassTransit(x =>
+        {
+            // Saga — replaces GroupJoinProcessManager
+            x.AddSagaStateMachine<GroupJoinStateMachine, GroupJoinSagaState>()
+             .EntityFrameworkRepository(r =>
+             {
+                 r.ConcurrencyMode = ConcurrencyMode.Optimistic;
+                 r.AddDbContext<DbContext, AppDbContext>((sp, o) =>
+                 {
+                     var cs = sp.GetRequiredService<IConfiguration>()
+                                .GetConnectionString("DefaultConnection")!;
+                     o.UseNpgsql(cs).UseSnakeCaseNamingConvention();
+                 });
+             });
+
+            x.AddConsumer<InitiatePaymentConsumer>();
+            x.AddConsumer<EnrollmentConfirmedConsumer>();
+
+            // EF Core Outbox — replaces OutboxProcessor + OutboxMessage.
+            // Messages published via IPublishEndpoint during a SaveChanges are stored
+            // in MassTransit's outbox tables atomically, then delivered to the broker
+            // by MassTransit's background delivery service after commit.
+            x.AddEntityFrameworkOutbox<AppDbContext>(o =>
+            {
+                o.UsePostgres();
+                o.UseBusOutbox();
+            });
+
+            if (!string.IsNullOrWhiteSpace(rabbitHost))
+            {
+                x.UsingRabbitMq((ctx, cfg) =>
+                {
+                    cfg.Host(rabbitHost, h =>
+                    {
+                        h.Username(configuration["RabbitMQ:Username"] ?? "guest");
+                        h.Password(configuration["RabbitMQ:Password"] ?? "guest");
+                    });
+                    cfg.ConfigureEndpoints(ctx);
+                });
+            }
+            else
+            {
+                // No broker configured — in-memory transport for local dev without Docker.
+                x.UsingInMemory((ctx, cfg) => cfg.ConfigureEndpoints(ctx));
+            }
+        });
 
         return services;
     }

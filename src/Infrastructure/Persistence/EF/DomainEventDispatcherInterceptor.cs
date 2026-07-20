@@ -1,57 +1,51 @@
 using Domain.Abstractions;
-using Infrastructure.Outbox;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Newtonsoft.Json;
 
 namespace Infrastructure.Persistence.EF;
 
 /// <summary>
-/// EF Core SaveChanges interceptor that converts in-memory domain events into
-/// durable OutboxMessages before the transaction commits.
+/// EF Core SaveChanges interceptor that publishes domain events via MassTransit
+/// before the transaction commits — replacing the manual OutboxMessage approach.
 ///
-/// Flow on SaveChangesAsync:
-///   1. Collect all IDomainEvents from tracked Entity instances (PopDomainEvents clears them)
-///   2. Serialise each event to JSON with its AssemblyQualifiedName as the type discriminator
-///   3. Insert OutboxMessages in the same transaction — guaranteed delivery once the commit succeeds
-///   4. OutboxProcessor (BackgroundService) polls and re-publishes via MediatR
+/// When UseEntityFrameworkOutbox is configured, IPublishEndpoint writes messages
+/// to MassTransit's own outbox tables within the SAME EF Core transaction.
+/// After commit, MassTransit's background service delivers them to RabbitMQ.
+/// Atomicity guarantee is identical to the manual outbox, but the infrastructure
+/// is provided by MassTransit rather than hand-rolled.
+///
+/// Compare with main branch DomainEventDispatcherInterceptor which writes to
+/// the custom OutboxMessage table and relies on OutboxProcessor for delivery.
 /// </summary>
-public class DomainEventDispatcherInterceptor : SaveChangesInterceptor
+public class DomainEventDispatcherInterceptor(IPublishEndpoint publishEndpoint)
+    : SaveChangesInterceptor
 {
     public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
-        DbContextEventData    eventData,
+        DbContextEventData     eventData,
         InterceptionResult<int> result,
-        CancellationToken     ct = default)
+        CancellationToken      ct = default)
     {
-        Enqueue(eventData.Context!);
+        await DispatchAsync(eventData.Context!, ct);
         return await base.SavingChangesAsync(eventData, result, ct);
     }
 
     public override InterceptionResult<int> SavingChanges(
-        DbContextEventData    eventData,
+        DbContextEventData     eventData,
         InterceptionResult<int> result)
     {
-        Enqueue(eventData.Context!);
+        DispatchAsync(eventData.Context!, CancellationToken.None).GetAwaiter().GetResult();
         return base.SavingChanges(eventData, result);
     }
 
-    private static void Enqueue(DbContext context)
+    private async Task DispatchAsync(DbContext context, CancellationToken ct)
     {
-        var domainEvents = context.ChangeTracker
+        var events = context.ChangeTracker
             .Entries<Entity>()
             .SelectMany(e => e.Entity.PopDomainEvents())
             .ToList();
 
-        if (domainEvents.Count == 0) return;
-
-        var messages = domainEvents.Select(e => new OutboxMessage
-        {
-            Id        = Guid.NewGuid(),
-            EventType = e.GetType().AssemblyQualifiedName!,
-            Payload   = JsonConvert.SerializeObject(e),
-            CreatedAt = DateTime.UtcNow,
-        }).ToList();
-
-        context.Set<OutboxMessage>().AddRange(messages);
+        foreach (var @event in events)
+            await publishEndpoint.Publish((object)@event, @event.GetType(), ct);
     }
 }

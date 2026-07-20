@@ -27,6 +27,9 @@
     <PackageVersion Include="Dapper"                                            Version="2.1.35" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions"        Version="8.0.1" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect"  Version="8.0.2" />
+    <PackageVersion Include="MassTransit"                                       Version="8.3.6" />
+    <PackageVersion Include="MassTransit.RabbitMQ"                             Version="8.3.6" />
+    <PackageVersion Include="MassTransit.EntityFrameworkCore"                  Version="8.3.6" />
   </ItemGroup>
 
   <!-- API -->

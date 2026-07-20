@@ -17,7 +17,7 @@ public class LayerDependencyTests
     // Assembly anchors — change these if you rename the projects.
     private static readonly System.Reflection.Assembly DomainAssembly         = typeof(Domain.Abstractions.Result).Assembly;
     private static readonly System.Reflection.Assembly ApplicationAssembly    = typeof(Application.GroupJoinRequests.GroupJoinRequestDto).Assembly;
-    private static readonly System.Reflection.Assembly InfrastructureAssembly = typeof(Infrastructure.Outbox.OutboxProcessor).Assembly;
+    private static readonly System.Reflection.Assembly InfrastructureAssembly = typeof(Infrastructure.Messaging.GroupJoinStateMachine).Assembly;
 
     // ── Domain: no upstream dependencies ─────────────────────────
 
